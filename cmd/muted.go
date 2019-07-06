@@ -1,100 +1,65 @@
 package main
 
 import (
-	"encoding/json"
+	//	"encoding/json"
+	"flag"
 	//	"errors"
 	//	"html/template"
-	"fmt"
-	"io/ioutil"
+	//	"fmt"
+	//	"io/ioutil"
 	"log"
 	"net/http"
-	"regexp"
+	//	"regexp"
+
+	"github.com/gorilla/websocket"
 )
 
-type Room struct {
-	Tag         string
-	Name        string
-	Brief       string
-	Description string
-}
+var addr = flag.String("addr", "localhost:4004", "http service addresee")
 
-var validPath = regexp.MustCompile("^/(edit|save|view)/([a-zA-Z0-9]+)$")
+// todo: need to really check the header:Origin before releasing.
+var upgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool {
+		return true
+	},
+} // use default options
 
-func (p *Room) save() error {
-	filename := p.Tag + ".json"
-
-	text, _ := json.Marshal(p)
-
-	return ioutil.WriteFile(filename, []byte(text), 0600)
-}
-
-func loadRoom(title string) ([]byte, error) {
-	filename := title + ".json"
-
-	body, err := ioutil.ReadFile(filename)
+func echo(w http.ResponseWriter, r *http.Request) {
+	c, err := upgrader.Upgrade(w, r, nil)
 
 	if err != nil {
-		return nil, err
-	}
-
-	return body, nil
-}
-
-func viewHandler(w http.ResponseWriter, r *http.Request, title string) {
-	p, err := loadRoom(title)
-
-	if err != nil {
-		http.Redirect(w, r, "/edit/"+title, http.StatusFound)
+		log.Print("Upgrade:", err)
 
 		return
 	}
 
-	fmt.Fprintf(w, "%s", p)
-}
+	defer c.Close()
 
-func editHandler(w http.ResponseWriter, r *http.Request, title string) {
-	//	p, err := loadRoom(title)
+	for {
+		mt, message, err := c.ReadMessage()
 
-	//	if err != nil {
-	//		p = &Room{Tag: title}
-	//	}
-}
+		if err != nil {
+			log.Println("read:", err)
 
-func saveHandler(w http.ResponseWriter, r *http.Request, title string) {
-	//	body := r.FormValue("body")
-
-	//	json.NewDecoder(r.Body).Decode(p)
-
-	//	p := &Room{Title: title, Body: []byte(body)}
-	//	err := p.save()
-
-	//	if err != nil {
-	//		http.Error(w, err.Error(), http.StatusInternalServerError)
-
-	//		return
-	//	}
-
-	http.Redirect(w, r, "/view/"+title, http.StatusFound)
-}
-
-func makeHandler(fn func(http.ResponseWriter, *http.Request, string)) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		m := validPath.FindStringSubmatch(r.URL.Path)
-
-		if m == nil {
-			http.NotFound(w, r)
-
-			return
+			break
 		}
 
-		fn(w, r, m[2])
+		log.Printf("recv: %s", message)
+
+		err = c.WriteMessage(mt, message)
+
+		if err != nil {
+			log.Println("write: ", err)
+
+			break
+		}
 	}
 }
 
 func main() {
-	http.HandleFunc("/view/", makeHandler(viewHandler))
-	//	http.HandleFunc("/edit/", makeHandler(editHandler))
-	//	http.HandleFunc("/save/", makeHandler(saveHandler))
+	flag.Parse()
+	log.SetFlags(0)
 
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	http.HandleFunc("/", echo)
+
+	log.Fatal(http.ListenAndServe(*addr, nil))
 }
